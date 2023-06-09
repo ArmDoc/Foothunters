@@ -1,0 +1,222 @@
+version: "3.8"
+services:
+  # PHP Service
+  app:
+    build:
+      context: .
+      dockerfile: ./services/app/Dockerfile
+      target: dev
+    image: ${PUBLISHER}/${PREFIX}-app:latest
+    restart: always
+    volumes:
+      - ./src:/var/www
+      # - appdata:/var/www/storage
+    networks:
+      - app-network
+    healthcheck:
+      test: pidof php-fpm
+      retries: 10
+      start_period: 10s
+      interval: 1s
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    ports:
+      - "9000"
+    dns:
+      - 8.8.8.8
+    deploy:
+      mode: replicated
+      replicas: ${APP_SCALE}
+
+  # Queue Service
+  queue:
+    build:
+      context: .
+      dockerfile: ./services/queue/Dockerfile
+    image: ${PUBLISHER}/${PREFIX}-queue:latest
+    restart: always
+    volumes:
+      - ./src:/var/www
+      # - appdata:/var/www/storage
+    networks:
+      - app-network
+    depends_on:
+      websockets:
+        condition: service_healthy
+    dns:
+      - 8.8.8.8
+    deploy:
+      mode: replicated
+      replicas: ${QUEUE_SCALE}
+
+  # Queue Service
+  websockets:
+    build:
+      context: .
+      dockerfile: ./services/websockets/Dockerfile
+    image: ${PUBLISHER}/${PREFIX}-websockets:latest
+    restart: always
+    volumes:
+      - ./src:/var/www
+      # - appdata:/var/www/storage
+    networks:
+      - app-network
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: pidof php-fpm # netstat -an | grep :6001
+      retries: 10
+      start_period: 10s
+      interval: 1s
+
+  # Nginx Service
+  server:
+    build:
+      context: ./services/server
+      target: dev
+    image: ${PUBLISHER}/${PREFIX}-server:latest
+    container_name: ${PREFIX}-server
+    restart: always
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./src:/var/www
+      # - appdata:/var/www/storage
+    networks:
+      - app-network
+    healthcheck:
+      test: nginx -t || exit 1
+      retries: 10
+      start_period: 10s
+      interval: 1s
+
+  # MySQL Service
+  db:
+    build:
+      context: ./services/db
+    image: ${PUBLISHER}/${PREFIX}-db:latest
+    container_name: ${PREFIX}-db
+    restart: always
+    ports:
+      - "3306:3306"
+    networks:
+      - app-network
+    volumes:
+      - dbdata:/var/lib/mysql/
+    healthcheck:
+      test: mysqladmin -u$DB_USERNAME -p$DB_PASSWORD ping
+      retries: 10
+      start_period: 10s
+      interval: 1s
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE}
+      MYSQL_USER: ${DB_USERNAME}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_RANDOM_ROOT_PASSWORD: yes
+
+  # Redis Service
+  redis:
+    build:
+      context: ./services/redis
+    image: ${PUBLISHER}/${PREFIX}-redis:latest
+    container_name: ${PREFIX}-redis
+    restart: always
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: redis-cli ping
+      retries: 10
+      start_period: 10s
+      interval: 1s
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    networks:
+      - app-network
+    ports:
+      - "6379"
+
+  #FOR DEVELOPMENT ONLY
+
+  #Quasar service
+  quasar:
+    image: ${PUBLISHER}/${PREFIX}-quasar:latest
+    build:
+      context: .
+      dockerfile: ./services/quasar/Dockerfile
+    restart: always
+    ports:
+      - "3000:8080"
+    networks:
+      - app-network
+    volumes:
+      - ./src/resources/js/quasar:/var/www
+
+  #PhpMyAdmin Service (URL - localhost:8080)
+  # phpmyadmin:
+  #   image: phpmyadmin:latest
+  #   container_name: ${PREFIX}-phpmyadmin
+  #   restart: always
+  #   environment:
+  #     PMA_HOST: db
+  #     PMA_PORT: 3306
+  #     PMA_USER: ${DB_USERNAME}
+  #     PMA_PASSWORD: ${DB_PASSWORD}
+  #     MYSQL_USER: ${DB_USERNAME}
+  #     MYSQL_PASSWORD: ${DB_PASSWORD}
+  #     MYSQL_ROOT_PASSWORD: root
+  #   ports:
+  #     - "8080:80"
+  #   depends_on:
+  #     - db
+  #   networks:
+  #     - app-network
+
+  # Redis Commander (URL - localhost:8081)
+  redis-commander:
+    container_name: ${PREFIX}-redis-commander
+    image: rediscommander/redis-commander:latest
+    restart: always
+    environment:
+      - REDIS_HOSTS=local:redis:6379:0:${REDIS_PASSWORD}
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    networks:
+      - app-network
+
+  # Mailhog
+  mailhog:
+    container_name: ${PREFIX}-mailhog
+    image: mailhog/mailhog:latest
+    restart: always
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # WEB
+    networks:
+      - app-network
+
+# Docker Networks
+networks:
+  app-network:
+    name: ${PREFIX}-network
+    driver: bridge
+# Volumes
+volumes:
+  # appdata:
+  #   name: ${PREFIX}-appdata
+  #   driver: local
+  dbdata:
+    name: ${PREFIX}-dbdata
+    driver: local
+  redisdata:
+    name: ${PREFIX}-redisdata
+    driver: local
