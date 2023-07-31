@@ -15,6 +15,7 @@ return new class extends Migration
     {
         Schema::create('users_profile', function (Blueprint $table) {
             $table->id();
+            $table->int('email')->uniqid();
             $table->int('user_id')->unique();
             $table->string('type');
             $table->string('name');
@@ -22,8 +23,11 @@ return new class extends Migration
             $table->dateTime('birth_date');
             $table->int('phone')->nullable();
             $table->timestamps();
-        });
+        }
+        // TODO
+    );
     }
+
 
     /**
      * Reverse the migrations.
